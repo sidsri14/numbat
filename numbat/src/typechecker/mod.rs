@@ -461,6 +461,27 @@ impl TypeChecker {
                         Type::Fn(p, r) => (p, r),
                         _ => unreachable!(),
                     };
+
+                    // A direct function reference behaves exactly like `|>`:
+                    // de-sugar it into the regular function-call machinery so
+                    // that errors (e.g. incompatible dimensions) are reported
+                    // with the same rich diagnostics as `f(x)` / `x |> f`.
+                    if let Some((function_name, signature)) =
+                        self.env.get_proper_function_reference(rhs)
+                    {
+                        return proper_function_call(ProperFunctionCallArgs {
+                            registry: &mut self.registry,
+                            constraints: &mut self.constraints,
+                            name_generator: &mut self.name_generator,
+                            span: &rhs.full_span(),
+                            full_span: &lhs.full_span().extend(&rhs.full_span()),
+                            function_name,
+                            signature,
+                            arguments: vec![lhs_checked],
+                            argument_types: vec![lhs_type],
+                        });
+                    }
+
                     // make sure that there is just one paramter (return arity error otherwise)
                     if parameter_types.len() != 1 {
                         return Err(Box::new(TypeCheckError::WrongArity {

@@ -1,0 +1,22 @@
+---
+source: numbat/tests/prelude_and_examples.rs
+expression: output
+input_file: examples/typecheck_error/incompatible_dimensions_in_function_application.nbt
+---
+error: while type checking
+   ┌─ Module 'physics::temperature_conversion', File [PRELUDE_FILE]:17:12
+   │
+17 │ fn celsius(t_kelvin: Temperature) -> Scalar = °C(t_kelvin)
+   │            ^^^^^^^^ Temperature
+   │
+   ┌─ <internal:3>:1:1
+   │
+ 1 │ 2 -> celsius
+   │ ^    ------- incompatible dimensions in argument 1 of function call to 'celsius'
+   │ │     
+   │ Angle or Scalar or SolidAngle
+   │
+   = parameter type: Temperature
+      argument type: Scalar         [= Angle, Scalar, SolidAngle]
+     
+     Suggested fix: multiply the function argument by a `Temperature` factor
