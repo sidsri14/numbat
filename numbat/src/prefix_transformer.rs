@@ -157,6 +157,9 @@ impl Transformer {
             Expression::AccessField { expr, .. } => {
                 self.transform_expression(expr);
             }
+            Expression::Parens { expr, .. } => {
+                self.transform_expression(expr);
+            }
             Expression::List(_, elements) => {
                 for e in elements {
                     self.transform_expression(e);

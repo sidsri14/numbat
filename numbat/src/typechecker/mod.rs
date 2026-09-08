@@ -1213,6 +1213,7 @@ impl TypeChecker {
                     field_type: TypeScheme::concrete(field_type),
                 }
             }
+            ast::Expression::Parens { expr, .. } => self.elaborate_expression(expr)?,
             ast::Expression::List(span, elements) => {
                 let elements_checked = elements
                     .iter()

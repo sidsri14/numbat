@@ -1654,17 +1654,20 @@ impl<'a> Parser<'a> {
             parts.retain(|p| !matches!(p, StringPart::Fixed(s) if s.is_empty()));
 
             Ok(Expression::String(span_full_string, parts))
-        } else if self.match_exact(tokens, TokenKind::LeftParen).is_some() {
+        } else if let Some(token_left_paren) = self.match_exact(tokens, TokenKind::LeftParen) {
             let inner = self.expression(tokens)?;
 
-            if self.match_exact(tokens, TokenKind::RightParen).is_none() {
+            let Some(token_right_paren) = self.match_exact(tokens, TokenKind::RightParen) else {
                 return Err(ParseError::new(
                     ParseErrorKind::MissingClosingParen,
                     self.peek(tokens).span,
                 ));
-            }
+            };
 
-            Ok(inner)
+            Ok(Expression::Parens {
+                full_span: token_left_paren.span.extend(&token_right_paren.span),
+                expr: Box::new(inner),
+            })
         } else if matches!(
             self.peek(tokens).kind,
             TokenKind::ProcedurePrint | TokenKind::ProcedureAssertEq
@@ -2194,9 +2197,109 @@ mod tests {
             let statements = parse(input, 0).expect("parse error").replace_spans();
 
             assert!(statements.len() == 1);
-            let statement = &statements[0];
+            let statement = strip_parens_stmt(statements.into_iter().next().unwrap());
 
-            assert_eq!(*statement, statement_expected);
+            assert_eq!(statement, statement_expected);
+        }
+    }
+
+    /// Drop `Parens` nodes (which are semantically transparent) so that tests can
+    /// compare against ASTs constructed without explicit parentheses.
+    fn strip_parens<'a>(expression: &Expression<'a>) -> Expression<'a> {
+        match expression {
+            Expression::Parens { expr, .. } => strip_parens(expr),
+            Expression::UnaryOperator { op, expr, span_op } => Expression::UnaryOperator {
+                op: *op,
+                expr: Box::new(strip_parens(expr)),
+                span_op: *span_op,
+            },
+            Expression::BinaryOperator {
+                op,
+                lhs,
+                rhs,
+                span_op,
+            } => Expression::BinaryOperator {
+                op: *op,
+                lhs: Box::new(strip_parens(lhs)),
+                rhs: Box::new(strip_parens(rhs)),
+                span_op: *span_op,
+            },
+            Expression::FunctionCall {
+                ident_span,
+                full_span,
+                callable,
+                args,
+            } => Expression::FunctionCall {
+                ident_span: *ident_span,
+                full_span: *full_span,
+                callable: Box::new(strip_parens(callable)),
+                args: args.iter().map(strip_parens).collect(),
+            },
+            Expression::Condition {
+                span,
+                condition,
+                then_expr,
+                else_expr,
+            } => Expression::Condition {
+                span: *span,
+                condition: Box::new(strip_parens(condition)),
+                then_expr: Box::new(strip_parens(then_expr)),
+                else_expr: Box::new(strip_parens(else_expr)),
+            },
+            Expression::InstantiateStruct {
+                full_span,
+                ident_span,
+                name,
+                fields,
+            } => Expression::InstantiateStruct {
+                full_span: *full_span,
+                ident_span: *ident_span,
+                name,
+                fields: fields
+                    .iter()
+                    .map(|(s, n, v)| (*s, *n, strip_parens(v)))
+                    .collect(),
+            },
+            Expression::AccessField {
+                full_span,
+                ident_span,
+                expr,
+                field_name,
+            } => Expression::AccessField {
+                full_span: *full_span,
+                ident_span: *ident_span,
+                expr: Box::new(strip_parens(expr)),
+                field_name,
+            },
+            Expression::List(span, elements) => {
+                Expression::List(*span, elements.iter().map(strip_parens).collect())
+            }
+            Expression::String(span, parts) => Expression::String(
+                *span,
+                parts
+                    .iter()
+                    .map(|p| match p {
+                        StringPart::Fixed(s) => StringPart::Fixed(s.clone()),
+                        StringPart::Interpolation {
+                            span,
+                            expr,
+                            format_specifiers,
+                        } => StringPart::Interpolation {
+                            span: *span,
+                            expr: Box::new(strip_parens(expr)),
+                            format_specifiers: *format_specifiers,
+                        },
+                    })
+                    .collect(),
+            ),
+            other => other.clone(),
+        }
+    }
+
+    fn strip_parens_stmt(statement: Statement) -> Statement {
+        match statement {
+            Statement::Expression(expression) => Statement::Expression(strip_parens(&expression)),
+            other => other,
         }
     }
 
@@ -2259,6 +2362,64 @@ mod tests {
             &["1)", "(1))"],
             ParseErrorKind::TrailingCharacters(")".into()),
         );
+    }
+
+    #[test]
+    fn parens_preserved_in_ast() {
+        let statements = parse("(1)", 0).expect("parse error");
+        let Statement::Expression(expr) = &statements[0] else {
+            panic!("expected expression statement")
+        };
+        match expr {
+            Expression::Parens { full_span, expr } => {
+                assert_eq!(full_span.start, 0.into());
+                assert_eq!(full_span.end, 3.into());
+                assert_eq!(expr.full_span().start, 1.into());
+                assert_eq!(expr.full_span().end, 2.into());
+            }
+            _ => panic!("expected Parens node, got {expr:?}"),
+        }
+
+        let statements = parse("((1))", 0).expect("parse error");
+        let Statement::Expression(expr) = &statements[0] else {
+            panic!("expected expression statement")
+        };
+        match expr {
+            Expression::Parens { full_span, expr } => {
+                assert_eq!(full_span.start, 0.into());
+                assert_eq!(full_span.end, 5.into());
+                match expr.as_ref() {
+                    Expression::Parens { full_span, expr } => {
+                        assert_eq!(full_span.start, 1.into());
+                        assert_eq!(full_span.end, 4.into());
+                        assert_eq!(expr.full_span().start, 2.into());
+                        assert_eq!(expr.full_span().end, 3.into());
+                    }
+                    _ => panic!("expected inner Parens node, got {expr:?}"),
+                }
+            }
+            _ => panic!("expected outer Parens node, got {expr:?}"),
+        }
+    }
+
+    #[test]
+    fn parens_spans_in_binary_operation() {
+        let statements = parse("1 + (2 * 3)", 0).expect("parse error");
+        let Statement::Expression(expr) = &statements[0] else {
+            panic!("expected expression statement")
+        };
+        match expr {
+            Expression::BinaryOperator { rhs, .. } => match rhs.as_ref() {
+                Expression::Parens { full_span, expr } => {
+                    assert_eq!(full_span.start, 4.into());
+                    assert_eq!(full_span.end, 11.into());
+                    assert_eq!(expr.full_span().start, 5.into());
+                    assert_eq!(expr.full_span().end, 10.into());
+                }
+                _ => panic!("expected Parens node on the right-hand side, got {rhs:?}"),
+            },
+            _ => panic!("expected BinaryOperator node, got {expr:?}"),
+        }
     }
 
     #[test]

@@ -122,6 +122,10 @@ pub enum Expression<'a> {
         expr: Box<Expression<'a>>,
         field_name: &'a str,
     },
+    Parens {
+        full_span: Span,
+        expr: Box<Expression<'a>>,
+    },
     List(Span, Vec<Expression<'a>>),
 }
 
@@ -156,6 +160,7 @@ impl Expression<'_> {
             Expression::String(span, _) => *span,
             Expression::InstantiateStruct { full_span, .. } => *full_span,
             Expression::AccessField { full_span, .. } => *full_span,
+            Expression::Parens { full_span, .. } => *full_span,
             Expression::List(span, _) => *span,
             Expression::TypedHole(span) => *span,
         }
@@ -715,6 +720,10 @@ impl ReplaceSpans for Expression<'_> {
                 ident_span: Span::dummy(),
                 expr: Box::new(expr.replace_spans()),
                 field_name,
+            },
+            Expression::Parens { expr, .. } => Expression::Parens {
+                full_span: Span::dummy(),
+                expr: Box::new(expr.replace_spans()),
             },
             Expression::List(_, elements) => Expression::List(
                 Span::dummy(),

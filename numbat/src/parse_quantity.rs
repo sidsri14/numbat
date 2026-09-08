@@ -69,6 +69,8 @@ fn get_expression_type(
     match expr {
         Expression::Scalar(_, _) => Ok(TypeScheme::concrete(Type::scalar())),
 
+        Expression::Parens { expr, .. } => get_expression_type(expr, typechecker),
+
         Expression::BinaryOperator {
             op: BinaryOperator::Mul,
             rhs,
@@ -106,6 +108,9 @@ fn evaluate_quantity_expression(
         // Plain scalar
         Expression::Scalar(_, n) => Ok(Quantity::from_scalar(n.to_f64())),
 
+        // Parentheses
+        Expression::Parens { expr, .. } => evaluate_quantity_expression(expr, unit_lookup),
+
         // Scalar × Unit
         Expression::BinaryOperator {
             op: BinaryOperator::Mul,
@@ -138,6 +143,7 @@ fn evaluate_quantity_expression(
 fn extract_scalar(expr: &Expression) -> Result<f64, QuantityLiteralError> {
     match expr {
         Expression::Scalar(_, n) => Ok(n.to_f64()),
+        Expression::Parens { expr, .. } => extract_scalar(expr),
         _ => Err(QuantityLiteralError::InvalidPattern(
             "Expected scalar".to_string(),
         )),
@@ -156,6 +162,7 @@ fn extract_unit(
             })?;
             Ok(base_unit.with_prefix(*prefix))
         }
+        Expression::Parens { expr, .. } => extract_unit(expr, unit_lookup),
         _ => Err(QuantityLiteralError::InvalidPattern(
             "Expected unit identifier".to_string(),
         )),
@@ -224,6 +231,8 @@ pub fn parse_quantity_ast(input: &str) -> Result<Expression<'_>, QuantityLiteral
 fn is_valid_quantity_literal(expr: &Expression) -> bool {
     match expr {
         Expression::Scalar(_, _) => true,
+
+        Expression::Parens { expr, .. } => is_valid_quantity_literal(expr),
 
         // Scalar times unit (implicit or explicit multiplication)
         Expression::BinaryOperator {
